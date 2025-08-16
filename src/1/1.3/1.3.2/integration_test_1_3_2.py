@@ -1,0 +1,175 @@
+import unittest
+from unittest.mock import patch, call
+
+# Assuming the provided implementation is in a file named manager_dashboard_auth.py
+# If running this test, save the implementation from the prompt into that file.
+from manager_dashboard_auth import user_authentication_flow
+
+class TestManagerDashboardAuthenticationIntegration(unittest.TestCase):
+    """
+    Integration tests for the user_authentication_flow, simulating a user's
+    interaction with the console application to test the integration of
+    registration, login, logout, and protected resource access.
+    """
+
+    @patch('builtins.print')
+    @patch('getpass.getpass')
+    @patch('builtins.input')
+    def test_full_user_lifecycle_scenario(self, mock_input, mock_getpass, mock_print):
+        """
+        Tests a complete, successful user journey:
+        1. Fails to access protected area.
+        2. Registers a new user.
+        3. Fails to register the same user again.
+        4. Logs in successfully.
+        5. Fails to log in again when already logged in.
+        6. Accesses the protected area successfully.
+        7. Logs out.
+        8. Fails to access the protected area again.
+        9. Exits the application.
+        """
+        mock_input.side_effect = [
+            '3',            # 1. Access protected area (fail)
+            '1',            # 2. Register
+            'testuser',     #    - username
+            '1',            # 3. Register again with same username
+            'testuser',     #    - username
+            '2',            # 4. Login
+            'testuser',     #    - username
+            '2',            # 5. Login again while already logged in
+            '3',            # 6. Access protected area (success)
+            '4',            # 7. Logout
+            '3',            # 8. Access protected area again (fail)
+            '5'             # 9. Exit
+        ]
+        mock_getpass.side_effect = [
+            'validpassword123',  # For successful registration
+            'validpassword123'   # For successful login
+        ]
+
+        user_authentication_flow()
+
+        # Capture all print outputs for analysis
+        output_calls = [c.args[0] for c in mock_print.call_args_list if c.args]
+        full_output = "\n".join(output_calls)
+
+        # 1. Verify initial access denial
+        self.assertIn("Access denied. Please log in to view this content.", full_output)
+        
+        # 2. Verify successful registration
+        self.assertIn("User 'testuser' registered successfully!", full_output)
+        
+        # 3. Verify failure on duplicate registration
+        self.assertIn("Username already exists. Please try a different one.", full_output)
+
+        # 4. Verify successful login
+        self.assertIn("Welcome, testuser! Login successful.", full_output)
+        
+        # 5. Verify message when trying to log in while already authenticated
+        self.assertIn("You are already logged in as testuser.", full_output)
+
+        # 6. Verify successful access to protected area
+        self.assertIn("Welcome to the Protected Area, testuser!", full_output)
+        
+        # 7. Verify successful logout
+        self.assertIn("Logging out testuser.", full_output)
+
+        # 8. Verify access is denied after logout
+        # Check that "Access denied" appears twice, before login and after logout.
+        self.assertEqual(full_output.count("Access denied. Please log in to view this content."), 2)
+
+    @patch('builtins.print')
+    @patch('getpass.getpass')
+    @patch('builtins.input')
+    def test_invalid_login_attempts(self, mock_input, mock_getpass, mock_print):
+        """
+        Tests the system's response to various failed login attempts:
+        1. Registers a user.
+        2. Tries to log in with the correct username but wrong password.
+        3. Tries to log in with a non-existent username.
+        """
+        mock_input.side_effect = [
+            '1',         # Register a user first
+            'gooduser',  #  - username
+            '2',         # Login attempt 1: wrong password
+            'gooduser',  #  - username
+            '2',         # Login attempt 2: wrong username
+            'baduser',   #  - username
+            '5'          # Exit
+        ]
+        mock_getpass.side_effect = [
+            'correctpass', # For registration
+            'wrongpass',   # For first login attempt
+            'anypass'      # For second login attempt
+        ]
+
+        user_authentication_flow()
+
+        full_output = "\n".join([c.args[0] for c in mock_print.call_args_list if c.args])
+
+        self.assertIn("User 'gooduser' registered successfully!", full_output)
+        # Both wrong password and non-existent user should result in the same error message
+        self.assertEqual(full_output.count("Invalid username or password."), 2)
+        self.assertNotIn("Login successful", full_output)
+        self.assertNotIn("Welcome, gooduser", full_output)
+
+    @patch('builtins.print')
+    @patch('getpass.getpass')
+    @patch('builtins.input')
+    def test_invalid_registration_attempts(self, mock_input, mock_getpass, mock_print):
+        """
+        Tests the system's validation during the registration process:
+        1. Tries to register with an empty username.
+        2. Tries to register with a username containing spaces.
+        3. Tries to register with a password that is too short.
+        """
+        mock_input.side_effect = [
+            '1',             # Attempt 1: Empty username
+            '',
+            '1',             # Attempt 2: Username with spaces
+            'user name',
+            '1',             # Attempt 3: Password too short
+            'validuser',
+            '5'              # Exit
+        ]
+        mock_getpass.side_effect = [
+            'bad'  # Password with length < 4
+        ]
+
+        user_authentication_flow()
+
+        full_output = "\n".join([c.args[0] for c in mock_print.call_args_list if c.args])
+        
+        # The same message is used for empty and spaced usernames
+        self.assertEqual(full_output.count("Username cannot be empty or contain spaces."), 2)
+        self.assertIn("Password is too short. Must be at least 4 characters.", full_output)
+        self.assertNotIn("registered successfully", full_output)
+
+    @patch('builtins.print')
+    @patch('getpass.getpass')
+    @patch('builtins.input')
+    def test_invalid_choices_and_unauthenticated_actions(self, mock_input, mock_getpass, mock_print):
+        """
+        Tests miscellaneous edge cases:
+        1. Tries to log out when not logged in.
+        2. Enters invalid (non-numeric, out-of-range) menu choices.
+        """
+        mock_input.side_effect = [
+            '4',    # Attempt to logout when not logged in
+            '99',   # Invalid menu choice
+            'foo',  # Another invalid menu choice
+            '5'     # Exit
+        ]
+
+        user_authentication_flow()
+
+        full_output = "\n".join([c.args[0] for c in mock_print.call_args_list if c.args])
+
+        self.assertIn("You are not currently logged in.", full_output)
+        self.assertEqual(full_output.count("Invalid choice. Please enter a number from 1 to 5."), 2)
+        self.assertIn("Exiting application.", full_output)
+
+if __name__ == '__main__':
+    # To run this test, you must have the implementation from the prompt
+    # saved as a file named `manager_dashboard_auth.py` in the same directory.
+    unittest.main(argv=['first-arg-is-ignored'], exit=False)

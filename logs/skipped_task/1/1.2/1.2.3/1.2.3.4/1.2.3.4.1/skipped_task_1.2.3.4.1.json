@@ -1,0 +1,6 @@
+{
+  "task_id": "1.2.3.4.1",
+  "task": "Define rules for generating insights (e.g., 'Sentiment in #project-x has dropped 15% this week')",
+  "skip_reason": "Non-code task",
+  "timestamp": "2025-08-16 16:23:05"
+}

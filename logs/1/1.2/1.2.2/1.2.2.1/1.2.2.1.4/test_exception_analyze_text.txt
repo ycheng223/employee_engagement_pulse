@@ -1,0 +1,3 @@
+Exception during testing: No module named 'textblob'
+Function: analyze_text
+Task: Write unit tests for text analysis (positive, negative, neutral cases)

@@ -1,0 +1,356 @@
+import unittest
+import os
+import json
+import tempfile
+import logging
+from unittest.mock import patch
+
+# -----------------------------------------------------------------------------
+# Component Implementations
+# These are the actual implementations for the 'Project Setup & Configuration' task.
+# -----------------------------------------------------------------------------
+
+# --- Component 1: Configuration Loader ---
+
+class Config:
+    """
+    Loads configuration from a JSON file and overrides with environment variables.
+    """
+    def __init__(self, config_path=None):
+        self.settings = {}
+        if config_path:
+            self._load_from_file(config_path)
+        self._load_from_env()
+
+    def _load_from_file(self, path):
+        try:
+            with open(path, 'r') as f:
+                self.settings = json.load(f)
+        except FileNotFoundError:
+            # Config file is optional if all settings are from env
+            pass
+        except json.JSONDecodeError:
+            raise ValueError(f"Invalid JSON in config file: {path}")
+
+    def _load_from_env(self):
+        """Overrides file settings with environment variables."""
+        # Ensure nested dictionaries exist before populating
+        if 'database' not in self.settings:
+            self.settings['database'] = {}
+        if 'logging' not in self.settings:
+            self.settings['logging'] = {}
+
+        # Env var format: APP_SECTION_KEY
+        overrides = {
+            'APP_DATABASE_HOST': ('database', 'host'),
+            'APP_DATABASE_PORT': ('database', 'port', int),
+            'APP_DATABASE_USER': ('database', 'user'),
+            'APP_DATABASE_PASSWORD': ('database', 'password'),
+            'APP_LOG_LEVEL': ('logging', 'level')
+        }
+
+        for env_var, (section, key, *caster) in overrides.items():
+            value = os.environ.get(env_var)
+            if value:
+                cast_func = caster[0] if caster else str
+                self.settings[section][key] = cast_func(value)
+
+    def get(self, key, default=None):
+        """
+        Retrieves a configuration value using dot notation, e.g., 'database.host'.
+        """
+        try:
+            value = self.settings
+            for k in key.split('.'):
+                value = value[k]
+            return value
+        except (KeyError, TypeError):
+            return default
+
+# --- Component 2: Database Setup ---
+
+class DatabaseConnection:
+    """
+    A mock database connection handler for demonstration purposes.
+    """
+    def __init__(self, host, port, user, password):
+        self.host = host
+        self.port = port
+        self.user = user
+        self.password = password
+        self.connected = False
+        if not all([host, port, user, password]):
+            raise ValueError("Database connection parameters are missing.")
+
+    def connect(self):
+        self.connected = True
+
+    def is_connected(self):
+        return self.connected
+
+    def disconnect(self):
+        self.connected = False
+
+def setup_database(config: Config):
+    """
+    Initializes and returns a database connection based on the provided config.
+    """
+    db_config = config.get('database')
+    if not db_config:
+        raise ValueError("Database configuration not found.")
+
+    conn = DatabaseConnection(
+        host=db_config.get('host'),
+        port=db_config.get('port'),
+        user=db_config.get('user'),
+        password=db_config.get('password')
+    )
+    conn.connect()
+    return conn
+
+# --- Component 3: Logging Setup ---
+
+LOG_LEVELS = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL,
+}
+
+def setup_logging(config: Config):
+    """
+    Configures the root logger based on the provided config.
+    """
+    log_config = config.get('logging', {})
+    level_name = log_config.get('level', 'INFO').upper()
+    log_level = LOG_LEVELS.get(level_name, logging.INFO)
+    
+    # Remove existing handlers to prevent duplicate logs in test environments
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+    logging.basicConfig(level=log_level, format='%(levelname)s:root:%(message)s')
+    logging.getLogger().setLevel(log_level)
+    return logging.getLogger()
+
+# --- Component 4: Project Initializer (Orchestrator) ---
+
+class Project:
+    """
+    Orchestrates the entire project setup and configuration process.
+    """
+    def __init__(self, config_path=None):
+        self.config = None
+        self.db_connection = None
+        self.logger = None
+        self.config_path = config_path
+
+    def initialize(self):
+        """
+        Runs the sequence of setup tasks: config, logging, database.
+        """
+        # 1. Load configuration
+        self.config = Config(self.config_path)
+
+        # 2. Setup logging early so other components can use it
+        self.logger = setup_logging(self.config)
+        self.logger.info("Logging configured.")
+
+        # 3. Setup database connection
+        try:
+            self.db_connection = setup_database(self.config)
+            self.logger.info("Database connection established.")
+        except ValueError as e:
+            self.logger.error(f"Failed to setup database: {e}")
+            raise RuntimeError(f"Database setup failed: {e}") from e
+
+        self.logger.info("Project initialized successfully.")
+
+    def shutdown(self):
+        """
+        Gracefully tears down project resources.
+        """
+        if self.db_connection and self.db_connection.is_connected():
+            self.db_connection.disconnect()
+            if self.logger:
+                self.logger.info("Database connection closed.")
+
+
+# -----------------------------------------------------------------------------
+# Integration Test
+# -----------------------------------------------------------------------------
+
+class TestProjectSetupIntegration(unittest.TestCase):
+
+    def setUp(self):
+        """Set up a temporary directory for config files before each test."""
+        self.test_dir = tempfile.TemporaryDirectory()
+        self.config_path = os.path.join(self.test_dir.name, 'config.json')
+        # Use patch.dict to ensure a clean environment for each test
+        self.env_patcher = patch.dict(os.environ, {}, clear=True)
+        self.env_patcher.start()
+
+    def tearDown(self):
+        """Clean up resources after each test."""
+        self.test_dir.cleanup()
+        self.env_patcher.stop()
+        logging.shutdown()
+
+    def test_initialization_with_valid_file_config(self):
+        """
+        Tests the happy path: initialization from a complete and valid JSON config file.
+        Verifies that Config, setup_logging, and setup_database interact correctly.
+        """
+        # Arrange: Create a valid config file
+        config_data = {
+            "database": {
+                "host": "localhost",
+                "port": 5432,
+                "user": "testuser",
+                "password": "testpassword"
+            },
+            "logging": {
+                "level": "DEBUG"
+            }
+        }
+        with open(self.config_path, 'w') as f:
+            json.dump(config_data, f)
+
+        # Act: Initialize the project
+        project = Project(config_path=self.config_path)
+        project.initialize()
+
+        # Assert: Verify that all components are configured as expected
+        self.assertIsNotNone(project.db_connection)
+        self.assertTrue(project.db_connection.is_connected())
+        self.assertEqual(project.db_connection.host, "localhost")
+        self.assertEqual(project.db_connection.port, 5432)
+
+        self.assertIsNotNone(project.logger)
+        self.assertEqual(project.logger.level, logging.DEBUG)
+
+        # Act: Test shutdown
+        project.shutdown()
+        self.assertFalse(project.db_connection.is_connected())
+
+    @patch.dict(os.environ, {
+        'APP_DATABASE_HOST': 'env.host.com',
+        'APP_DATABASE_PORT': '9999',
+        'APP_LOG_LEVEL': 'WARNING',
+    })
+    def test_environment_variable_override(self):
+        """
+        Tests that environment variables correctly override settings from the config file.
+        This confirms the integration priority within the Config component and its effect on others.
+        """
+        # Arrange: Create a base config file that will be partially overridden
+        config_data = {
+            "database": {
+                "host": "file.host.com",
+                "port": 5432,
+                "user": "file_user",
+                "password": "file_password"
+            },
+            "logging": {
+                "level": "INFO"
+            }
+        }
+        with open(self.config_path, 'w') as f:
+            json.dump(config_data, f)
+
+        # Act: Initialize the project
+        project = Project(config_path=self.config_path)
+        project.initialize()
+
+        # Assert: Verify components used the overridden values from environment
+        self.assertEqual(project.db_connection.host, "env.host.com")
+        self.assertEqual(project.db_connection.port, 9999)
+        self.assertEqual(project.db_connection.user, "file_user") # This value was not overridden
+
+        self.assertEqual(project.logger.level, logging.WARNING)
+
+        project.shutdown()
+
+    def test_initialization_failure_on_missing_db_config(self):
+        """
+        Tests the error handling integration path when configuration is incomplete.
+        The Project orchestrator should catch the error from setup_database and raise a RuntimeError.
+        """
+        # Arrange: Create a config file missing the 'database' section
+        config_data = {"logging": {"level": "INFO"}}
+        with open(self.config_path, 'w') as f:
+            json.dump(config_data, f)
+
+        project = Project(config_path=self.config_path)
+
+        # Act & Assert: Check for the expected exception chain
+        with self.assertRaises(RuntimeError) as cm:
+            project.initialize()
+
+        self.assertIn("Database setup failed", str(cm.exception))
+        self.assertIsInstance(cm.exception.__cause__, ValueError)
+        self.assertIn("Database configuration not found", str(cm.exception.__cause__))
+        self.assertIsNone(project.db_connection)
+
+    def test_logging_output_during_initialization(self):
+        """
+        Tests that logging is configured first and correctly logs the subsequent setup steps.
+        This verifies the sequence of operations in the Project.initialize method.
+        """
+        # Arrange
+        config_data = {
+            "database": { "host": "db", "port": 1234, "user": "u", "password": "p" },
+            "logging": { "level": "INFO" }
+        }
+        with open(self.config_path, 'w') as f:
+            json.dump(config_data, f)
+
+        project = Project(config_path=self.config_path)
+
+        # Act & Assert: Capture log output during initialization
+        with self.assertLogs('root', level='INFO') as log_capture:
+            project.initialize()
+            
+            log_output = "\n".join(log_capture.output)
+            self.assertIn("INFO:root:Logging configured.", log_output)
+            self.assertIn("INFO:root:Database connection established.", log_output)
+            self.assertIn("INFO:root:Project initialized successfully.", log_output)
+
+        project.shutdown()
+
+    @patch.dict(os.environ, {
+        'APP_DATABASE_HOST': 'env.only.host',
+        'APP_DATABASE_PORT': '1111',
+        'APP_DATABASE_USER': 'env_user',
+        'APP_DATABASE_PASSWORD': 'env_password',
+        'APP_LOG_LEVEL': 'ERROR',
+    })
+    def test_initialization_with_only_environment_variables(self):
+        """
+        Tests that the project can be configured entirely via environment variables
+        if the config file is not present.
+        """
+        # Arrange: A non-existent config path is provided, but all necessary
+        # config is present in environment variables.
+        non_existent_path = os.path.join(self.test_dir.name, 'no_such_file.json')
+        project = Project(config_path=non_existent_path)
+
+        # Act
+        project.initialize()
+
+        # Assert
+        self.assertIsNotNone(project.db_connection)
+        self.assertTrue(project.db_connection.is_connected())
+        self.assertEqual(project.db_connection.host, "env.only.host")
+        self.assertEqual(project.db_connection.port, 1111)
+        self.assertEqual(project.db_connection.user, "env_user")
+
+        self.assertIsNotNone(project.logger)
+        self.assertEqual(project.logger.level, logging.ERROR)
+
+        project.shutdown()
+
+
+if __name__ == '__main__':
+    unittest.main()

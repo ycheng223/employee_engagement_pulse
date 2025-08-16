@@ -1,0 +1,3 @@
+Exception during testing: No module named 'slack_bolt'
+Function: run_slack_events_listener
+Task: Write unit tests for data ingestion service

@@ -1,0 +1,87 @@
+
+=== Coder Agent Log ===
+Timestamp: 2025-08-16T16:19:39.561411
+Task: Implement weekly aggregation script to calculate trends
+
+Output:
+from datetime import datetime
+
+def calculate_weekly_trends(daily_team_moods):
+    """
+    Calculates the week-over-week trend in average mood for each team.
+
+    The trend is defined as the difference between the current week's average mood
+    and the previous week's average mood. It requires at least two weeks of data
+    for a trend to be calculated.
+
+    Args:
+        daily_team_moods (dict): A dictionary where keys are dates ('YYYY-MM-DD')
+            and values are dictionaries of team IDs to their average mood score.
+            Example: {
+                '2023-10-23': { 'A': 4.0, 'B': 3.0 }, # Week 43
+                '2023-10-24': { 'A': 4.5 },          # Week 43
+                '2023-10-30': { 'A': 3.5, 'B': 3.5 }  # Week 44
+            }
+
+    Returns:
+        dict: A nested dictionary where keys are team IDs, and values are
+              dictionaries of week identifiers ('YYYY-WW') to their mood trend.
+              The first week for any team will not have a trend value.
+              Example: { 'A': { '2023-44': -0.75 }, 'B': { '2023-44': 0.5 } }
+    """
+    # 1. Aggregate daily data into weekly sums and counts
+    weekly_aggregates = {}
+    for date_str, teams_data in daily_team_moods.items():
+        try:
+            dt_obj = datetime.strptime(date_str, '%Y-%m-%d')
+            # Use ISO 8601 year and week number for consistent week definitions
+            year, week, _ = dt_obj.isocalendar()
+            week_id = f"{year}-{week:02d}"
+        except (ValueError, TypeError):
+            # Skip entries with invalid date formats
+            continue
+
+        for team_id, daily_avg in teams_data.items():
+            # Initialize data structures if not present
+            weekly_aggregates.setdefault(team_id, {}).setdefault(week_id, {'total': 0, 'count': 0})
+            
+            # Accumulate totals and counts for the week
+            weekly_aggregates[team_id][week_id]['total'] += daily_avg
+            weekly_aggregates[team_id][week_id]['count'] += 1
+
+    # 2. Calculate the average mood for each week
+    weekly_averages = {}
+    for team_id, weeks_data in weekly_aggregates.items():
+        weekly_averages[team_id] = {}
+        for week_id, data in weeks_data.items():
+            if data['count'] > 0:
+                average = data['total'] / data['count']
+                weekly_averages[team_id][week_id] = average
+
+    # 3. Calculate the trend by comparing consecutive weeks
+    trends = {}
+    for team_id, averages in weekly_averages.items():
+        trends[team_id] = {}
+        
+        # Sort weeks chronologically to ensure correct comparison
+        sorted_weeks = sorted(averages.keys())
+        
+        # We need at least two data points (weeks) to calculate a trend
+        if len(sorted_weeks) < 2:
+            continue
+
+        # Iterate from the second week onwards to compare with the previous one
+        for i in range(1, len(sorted_weeks)):
+            previous_week_id = sorted_weeks[i-1]
+            current_week_id = sorted_weeks[i]
+            
+            previous_avg = averages[previous_week_id]
+            current_avg = averages[current_week_id]
+            
+            # The trend is the change from the previous week
+            trend_value = current_avg - previous_avg
+            trends[team_id][current_week_id] = trend_value
+            
+    return trends
+
+==================================================

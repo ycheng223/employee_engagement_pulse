@@ -1,0 +1,140 @@
+import os
+import requests
+import secrets
+from urllib.parse import urlencode, parse_qs, urlparse
+
+# --- Configuration (replace with your actual provider's details) ---
+# It is best practice to load these from environment variables.
+CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID", "YOUR_CLIENT_ID")
+CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET", "YOUR_CLIENT_SECRET")
+REDIRECT_URI = "https://yourapp.com/callback"
+AUTHORIZATION_URL = "https://provider.com/oauth/authorize"
+TOKEN_URL = "https://provider.com/oauth/token"
+SCOPE = "read:data write:data" # Example scopes
+
+# In a real web application, this would be stored in the user's session.
+# For this script, we'll use a simple dictionary to simulate session state.
+_session_storage = {}
+
+def get_authorization_url():
+    """
+    Generates the full authorization URL and a state token for CSRF protection.
+
+    Returns:
+        tuple: A tuple containing the authorization URL (str) and the state (str).
+    """
+    state = secrets.token_urlsafe(16)
+    _session_storage['oauth_state'] = state
+
+    params = {
+        'client_id': CLIENT_ID,
+        'redirect_uri': REDIRECT_URI,
+        'response_type': 'code',
+        'scope': SCOPE,
+        'state': state
+    }
+    
+    return f"{AUTHORIZATION_URL}?{urlencode(params)}", state
+
+def exchange_code_for_token(authorization_code, received_state):
+    """
+    Exchanges the authorization code for an access token.
+
+    Args:
+        authorization_code (str): The authorization code from the callback.
+        received_state (str): The state parameter from the callback for verification.
+
+    Returns:
+        dict: A dictionary containing the token information, or None on failure.
+    """
+    # Verify the state to prevent Cross-Site Request Forgery (CSRF)
+    original_state = _session_storage.pop('oauth_state', None)
+    if not original_state or original_state != received_state:
+        print("Error: Invalid state. CSRF attack detected or session expired.")
+        return None
+
+    payload = {
+        'grant_type': 'authorization_code',
+        'code': authorization_code,
+        'redirect_uri': REDIRECT_URI,
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET
+    }
+
+    try:
+        response = requests.post(TOKEN_URL, data=payload, headers={
+            'Accept': 'application/json'
+        })
+        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
+    except requests.exceptions.RequestException as e:
+        print(f"Error requesting access token: {e}")
+        if e.response:
+            print(f"Response Body: {e.response.text}")
+        return None
+        
+    token_data = response.json()
+    
+    if 'access_token' not in token_data:
+        print("Error: 'access_token' not found in response.")
+        print("Full response:", token_data)
+        return None
+        
+    return token_data
+
+def implement_oauth_flow_for_app_installation():
+    """
+    Orchestrates and simulates the OAuth 2.0 Authorization Code flow for a command-line app.
+    This function guides the user through the necessary steps to get an access token.
+    """
+    # Check if placeholder configuration values are still present
+    if "YOUR_CLIENT_ID" in CLIENT_ID or "YOUR_CLIENT_SECRET" in CLIENT_SECRET:
+        print("CRITICAL: Please replace placeholder values for CLIENT_ID and CLIENT_SECRET.")
+        print("It's recommended to set them as environment variables:")
+        print("  export OAUTH_CLIENT_ID='your_id'")
+        print("  export OAUTH_CLIENT_SECRET='your_secret'")
+        return
+
+    # 1. Generate and display the authorization URL
+    auth_url, state = get_authorization_url()
+    print("--- Step 1: User Authorization ---")
+    print("Please open the following URL in your browser to authorize the application:")
+    print(auth_url)
+
+    # 2. Get the redirect URL from the user after they authorize the app
+    print("\n--- Step 2: Handle Redirect ---")
+    print("After authorization, the provider will redirect you to a URL.")
+    print("Please paste the full redirect URL here:")
+    redirect_url_input = input("> ")
+
+    # 3. Parse the authorization code and state from the redirect URL
+    try:
+        parsed_url = urlparse(redirect_url_input)
+        query_params = parse_qs(parsed_url.query)
+        
+        authorization_code = query_params.get('code', [None])[0]
+        received_state = query_params.get('state', [None])[0]
+
+        if not authorization_code or not received_state:
+            raise ValueError("URL must contain 'code' and 'state' query parameters.")
+
+    except (ValueError, IndexError) as e:
+        print(f"Error: Could not parse the redirect URL. {e}")
+        return
+
+    # 4. Exchange the authorization code for an access token
+    print("\n--- Step 3: Get Access Token ---")
+    token_info = exchange_code_for_token(authorization_code, received_state)
+
+    # 5. Display the result
+    if token_info:
+        print("\n--- OAuth Flow Successful! ---")
+        print("App installation is complete.")
+        print("Access Token:", token_info.get('access_token'))
+        print("Refresh Token:", token_info.get('refresh_token', 'Not provided'))
+        print("Expires In (seconds):", token_info.get('expires_in'))
+        print("Scope:", token_info.get('scope'))
+        # In a real application, you would now securely store token_info
+        # in your database, associated with the user or installation.
+    else:
+        print("\n--- OAuth Flow Failed ---")
+        print("Could not obtain access token. Please check the steps and configuration.")

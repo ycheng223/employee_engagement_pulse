@@ -1,0 +1,201 @@
+
+=== IntegrationTester Agent Log ===
+Timestamp: 2025-08-16T16:25:35.708443
+Task: Integration test for: API for Frontend Dashboard
+
+Output:
+import unittest
+import functools
+
+# --- Start of provided implementations ---
+
+# Implementation from 1.2.4.2: Authentication & Authorization for Managers
+
+# In a real application, this would be a database table.
+# Passwords should always be hashed, never stored as plain text.
+_USERS = {
+    'manager_a': {'password': 'password123', 'role': 'manager'},
+    'employee_b': {'password': 'password456', 'role': 'employee'},
+}
+
+def authenticate(username, password):
+    """
+    Performs authentication for a given user.
+
+    Args:
+        username (str): The username to authenticate.
+        password (str): The password to check.
+
+    Returns:
+        dict: The user object if authentication is successful, otherwise None.
+    """
+    user_data = _USERS.get(username)
+    if user_data and user_data['password'] == password:
+        # In a real app, you'd verify a hashed password here.
+        # Return a copy to avoid modifying the original data store.
+        return {'username': username, 'role': user_data['role']}
+    return None
+
+def manager_authorization_required(func):
+    """
+    Decorator to ensure a user has the 'manager' role.
+
+    This decorator assumes the authenticated user object is passed as the first
+    positional argument to the decorated function.
+    """
+    @functools.wraps(func)
+    def wrapper(user, *args, **kwargs):
+        """
+        Wrapper function that checks for manager role before executing the function.
+
+        Args:
+            user (dict): The authenticated user object.
+            *args: Variable length argument list.
+            **kwargs: Arbitrary keyword arguments.
+
+        Raises:
+            PermissionError: If the user is not authenticated or not a manager.
+        """
+        if user and user.get('role') == 'manager':
+            return func(user, *args, **kwargs)
+        else:
+            raise PermissionError("Access denied: Manager role required.")
+    return wrapper
+
+@manager_authorization_required
+def access_sensitive_manager_dashboard(user, dashboard_section):
+    """
+    An example function that requires manager authorization to access.
+    
+    Args:
+        user (dict): The authenticated user object (provided by the decorator).
+        dashboard_section (str): The specific section of the dashboard to access.
+
+    Returns:
+        str: A success message indicating access was granted.
+    """
+    return (
+        f"User '{user['username']}' successfully accessed "
+        f"the '{dashboard_section}' section of the manager dashboard."
+    )
+
+# --- End of provided implementations ---
+
+
+class TestDashboardApiIntegration(unittest.TestCase):
+    """
+    Integration tests for the Dashboard's authentication and authorization logic.
+    
+    This test suite verifies the interaction between the `authenticate` function
+    and the `manager_authorization_required` decorator to ensure that access
+    to protected functions is correctly handled for different user roles and
+    authentication statuses.
+    """
+
+    def test_successful_manager_access_flow(self):
+        """
+        Test: A manager authenticates successfully and accesses a protected resource.
+        Scenario:
+        1. Authenticate with valid manager credentials.
+        2. Use the returned user object to call the protected function.
+        Expected: Authentication succeeds and the protected function executes,
+                  returning a success message.
+        """
+        # Step 1: Authenticate the manager
+        manager_user = authenticate('manager_a', 'password123')
+        
+        # Verify authentication was successful
+        self.assertIsNotNone(manager_user)
+        self.assertEqual(manager_user['username'], 'manager_a')
+        self.assertEqual(manager_user['role'], 'manager')
+        
+        # Step 2: Access the protected resource
+        dashboard_section = "Financial Reports"
+        result_message = access_sensitive_manager_dashboard(manager_user, dashboard_section)
+        
+        # Verify access was granted and the message is correct
+        expected_message = (
+            f"User 'manager_a' successfully accessed "
+            f"the '{dashboard_section}' section of the manager dashboard."
+        )
+        self.assertEqual(result_message, expected_message)
+
+    def test_access_denied_for_authenticated_employee(self):
+        """
+        Test: An employee authenticates successfully but is denied access to a manager resource.
+        Scenario:
+        1. Authenticate with valid employee credentials.
+        2. Attempt to use the returned user object to call the manager-only function.
+        Expected: Authentication succeeds, but the authorization check fails,
+                  raising a PermissionError.
+        """
+        # Step 1: Authenticate the employee
+        employee_user = authenticate('employee_b', 'password456')
+        
+        # Verify authentication was successful
+        self.assertIsNotNone(employee_user)
+        self.assertEqual(employee_user['role'], 'employee')
+        
+        # Step 2: Attempt to access the protected resource and verify failure
+        with self.assertRaises(PermissionError) as cm:
+            access_sensitive_manager_dashboard(employee_user, "Employee Records")
+            
+        self.assertEqual(str(cm.exception), "Access denied: Manager role required.")
+
+    def test_access_denied_with_incorrect_password(self):
+        """
+        Test: A user fails authentication due to a wrong password and is denied access.
+        Scenario:
+        1. Attempt to authenticate with a valid username but an incorrect password.
+        2. Attempt to call the protected function with the result of the failed auth (None).
+        Expected: Authentication returns None, and the subsequent access attempt
+                  raises a PermissionError.
+        """
+        # Step 1: Attempt to authenticate with wrong password
+        failed_user = authenticate('manager_a', 'wrong_password')
+        
+        # Verify authentication failed
+        self.assertIsNone(failed_user)
+        
+        # Step 2: Attempt to access and verify failure
+        with self.assertRaises(PermissionError) as cm:
+            access_sensitive_manager_dashboard(failed_user, "Settings")
+
+        self.assertEqual(str(cm.exception), "Access denied: Manager role required.")
+
+    def test_access_denied_for_nonexistent_user(self):
+        """
+        Test: A non-existent user is denied access.
+        Scenario:
+        1. Attempt to authenticate with credentials for a user not in the system.
+        2. Attempt to call the protected function with the result (None).
+        Expected: Authentication returns None, and the access attempt raises
+                  a PermissionError.
+        """
+        # Step 1: Attempt to authenticate a non-existent user
+        non_existent_user = authenticate('unknown_user', 'some_password')
+
+        # Verify authentication failed
+        self.assertIsNone(non_existent_user)
+
+        # Step 2: Attempt to access and verify failure
+        with self.assertRaises(PermissionError) as cm:
+            access_sensitive_manager_dashboard(non_existent_user, "Dashboard")
+            
+        self.assertEqual(str(cm.exception), "Access denied: Manager role required.")
+
+    def test_decorator_preserves_function_metadata(self):
+        """
+        Test: The `manager_authorization_required` decorator preserves the wrapped function's metadata.
+        Scenario: Check the __name__ and __doc__ attributes of the decorated function.
+        Expected: The attributes should match the original, undecorated function's attributes,
+                  thanks to `functools.wraps`.
+        """
+        self.assertEqual(access_sensitive_manager_dashboard.__name__, 'access_sensitive_manager_dashboard')
+        self.assertIn("An example function that requires manager authorization", access_sensitive_manager_dashboard.__doc__)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
+
+==================================================

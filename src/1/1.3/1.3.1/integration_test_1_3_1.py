@@ -1,0 +1,243 @@
+import unittest
+
+# --- Component Implementations ---
+# These are the "available implementations" for the UI/UX Design task.
+
+class DesignSystem:
+    """Represents a collection of reusable design tokens."""
+    def __init__(self):
+        self.colors = {
+            'primary': '#007BFF',
+            'secondary': '#6C757D',
+            'background': '#FFFFFF',
+            'text': '#212529'
+        }
+        self.fonts = {
+            'heading': ('Helvetica', 24, 'bold'),
+            'body': ('Helvetica', 14, 'normal')
+        }
+        self.spacing = {
+            'small': '8px',
+            'medium': '16px',
+            'large': '24px'
+        }
+
+    def get_color(self, name):
+        return self.colors.get(name)
+
+    def get_font(self, name):
+        return self.fonts.get(name)
+
+class UserPersona:
+    """Defines a target user for the design."""
+    def __init__(self, name, goals, frustrations):
+        self.name = name
+        self.goals = goals
+        self.frustrations = frustrations
+
+class Wireframe:
+    """Represents a low-fidelity structural layout of a UI screen."""
+    def __init__(self, screen_name):
+        self.screen_name = screen_name
+        self.elements = {}  # {element_name: {'type': 'button', 'position': (x, y)}}
+
+    def add_element(self, name, element_type, position):
+        if name in self.elements:
+            raise ValueError(f"Element '{name}' already exists in wireframe.")
+        self.elements[name] = {'type': element_type, 'position': position}
+        return True
+
+    def get_element(self, name):
+        return self.elements.get(name)
+
+class Mockup:
+    """Applies visual styles from a DesignSystem to a Wireframe."""
+    def __init__(self, wireframe, design_system):
+        if not isinstance(wireframe, Wireframe):
+            raise TypeError("Mockup must be initialized with a Wireframe object.")
+        if not isinstance(design_system, DesignSystem):
+            raise TypeError("Mockup must be initialized with a DesignSystem object.")
+        
+        self.wireframe = wireframe
+        self.design_system = design_system
+        self.styled_elements = {
+            name: {**data, 'style': {}}
+            for name, data in wireframe.elements.items()
+        }
+
+    def apply_style(self, element_name, color_token, font_token):
+        if element_name not in self.styled_elements:
+            return False
+        
+        element = self.styled_elements[element_name]
+        element['style']['color'] = self.design_system.get_color(color_token)
+        element['style']['font'] = self.design_system.get_font(font_token)
+        return True
+
+class Prototype:
+    """Adds interactivity to a Mockup, defining user flows."""
+    def __init__(self, mockup):
+        if not isinstance(mockup, Mockup):
+            raise TypeError("Prototype must be initialized with a Mockup object.")
+        
+        self.mockup = mockup
+        self.current_screen = mockup.wireframe.screen_name
+        self.interactions = {}  # { (from_screen, on_element): to_screen }
+
+    def add_interaction(self, from_screen, on_element, to_screen):
+        if on_element not in self.mockup.styled_elements:
+            raise ValueError(f"Element '{on_element}' not found in the underlying mockup.")
+        self.interactions[(from_screen, on_element)] = to_screen
+
+    def simulate_click(self, element_name):
+        interaction_key = (self.current_screen, element_name)
+        if interaction_key in self.interactions:
+            self.current_screen = self.interactions[interaction_key]
+            return f"Transitioned to {self.current_screen}"
+        return f"No interaction defined for '{element_name}' on screen '{self.current_screen}'"
+
+class UsabilityTest:
+    """Simulates a user performing a task on a prototype."""
+    def __init__(self, prototype, persona):
+        self.prototype = prototype
+        self.persona = persona
+        self.initial_state = prototype.current_screen
+
+    def run_task(self, steps, target_screen):
+        """
+        Executes a sequence of clicks and checks if the final screen is reached.
+        'steps' is a list of element names to click in order.
+        """
+        # Reset prototype to initial state for the test
+        self.prototype.current_screen = self.initial_state
+        
+        print(f"\nRunning test for persona '{self.persona.name}' to reach '{target_screen}'.")
+        print(f"Initial screen: {self.prototype.current_screen}")
+
+        for step in steps:
+            result = self.prototype.simulate_click(step)
+            print(f"- Clicking '{step}': {self.prototype.current_screen}")
+        
+        final_screen = self.prototype.current_screen
+        success = final_screen == target_screen
+        
+        print(f"Test finished. Final screen: {final_screen}. Success: {success}")
+        return success
+
+# --- Integration Test ---
+
+class TestUIUXDesignWorkflow(unittest.TestCase):
+
+    def setUp(self):
+        """Set up a common environment for all tests."""
+        # 1. Define foundational elements
+        self.design_system = DesignSystem()
+        self.persona = UserPersona(
+            name="Alex",
+            goals=["Quickly log in", "View dashboard"],
+            frustrations=["Complicated forms", "Unclear navigation"]
+        )
+
+        # 2. Create a Wireframe for a login screen
+        self.login_wireframe = Wireframe("LoginScreen")
+        self.login_wireframe.add_element("email_field", "input", (10, 20))
+        self.login_wireframe.add_element("password_field", "input", (10, 60))
+        self.login_wireframe.add_element("login_button", "button", (10, 100))
+        self.login_wireframe.add_element("forgot_password_link", "link", (10, 140))
+
+        # 3. Create a Mockup from the Wireframe and Design System
+        self.login_mockup = Mockup(self.login_wireframe, self.design_system)
+
+        # 4. Create a Prototype from the Mockup
+        self.app_prototype = Prototype(self.login_mockup)
+
+    def test_full_workflow_from_wireframe_to_successful_usability_test(self):
+        """
+        Tests the entire integrated workflow: Wireframe -> Mockup -> Prototype -> UsabilityTest.
+        This scenario simulates a user successfully logging in.
+        """
+        # Step 1: Styling the Mockup
+        # The mockup is already created from the wireframe in setUp. Now, style it.
+        self.assertTrue(self.login_mockup.apply_style("login_button", "primary", "body"))
+        self.assertTrue(self.login_mockup.apply_style("forgot_password_link", "secondary", "body"))
+        
+        styled_button = self.login_mockup.styled_elements["login_button"]
+        self.assertEqual(styled_button['style']['color'], '#007BFF') # Check primary color
+        self.assertEqual(styled_button['style']['font'], ('Helvetica', 14, 'normal')) # Check body font
+
+        # Step 2: Adding Interactions to the Prototype
+        # Define the flow: clicking 'login_button' on 'LoginScreen' goes to 'Dashboard'.
+        self.app_prototype.add_interaction("LoginScreen", "login_button", "Dashboard")
+        self.app_prototype.add_interaction("LoginScreen", "forgot_password_link", "PasswordResetScreen")
+        
+        self.assertEqual(self.app_prototype.current_screen, "LoginScreen")
+
+        # Step 3: Running a Usability Test for a successful scenario
+        usability_test = UsabilityTest(self.app_prototype, self.persona)
+        login_task_steps = ["login_button"]
+        
+        # The run_task method simulates the clicks and checks the final state.
+        is_task_successful = usability_test.run_task(steps=login_task_steps, target_screen="Dashboard")
+
+        # Assertions
+        self.assertTrue(is_task_successful, "The usability test for logging in should have succeeded.")
+        self.assertEqual(self.app_prototype.current_screen, "Dashboard", "Prototype should be on the Dashboard screen after the test.")
+
+    def test_prototype_interaction_with_unclickable_element(self):
+        """
+        Tests that interacting with an element without a defined interaction
+        does not change the prototype's state.
+        """
+        # Add only one interaction
+        self.app_prototype.add_interaction("LoginScreen", "login_button", "Dashboard")
+        
+        initial_screen = self.app_prototype.current_screen
+        self.assertEqual(initial_screen, "LoginScreen")
+
+        # Simulate clicking an element that has no interaction defined for it
+        result_message = self.app_prototype.simulate_click("email_field")
+        
+        # Assertions
+        self.assertEqual(self.app_prototype.current_screen, initial_screen, "Screen should not change after clicking a non-interactive element.")
+        self.assertIn("No interaction defined", result_message)
+
+    def test_usability_test_failure_due_to_wrong_path(self):
+        """
+        Tests a scenario where the usability test fails because the user
+        takes an incorrect path to achieve the goal.
+        """
+        # Define interactions
+        self.app_prototype.add_interaction("LoginScreen", "login_button", "Dashboard")
+        self.app_prototype.add_interaction("LoginScreen", "forgot_password_link", "PasswordResetScreen")
+
+        # Setup and run the test
+        usability_test = UsabilityTest(self.app_prototype, self.persona)
+        
+        # The user's task is to get to the Dashboard, but they click the wrong link.
+        wrong_steps = ["forgot_password_link"]
+        is_task_successful = usability_test.run_task(steps=wrong_steps, target_screen="Dashboard")
+        
+        # Assertions
+        self.assertFalse(is_task_successful, "The usability test should fail if the target screen is not reached.")
+        self.assertEqual(self.app_prototype.current_screen, "PasswordResetScreen", "The prototype should be on the password reset screen.")
+        self.assertNotEqual(self.app_prototype.current_screen, "Dashboard", "The prototype should not have reached the dashboard.")
+
+    def test_component_creation_with_invalid_types(self):
+        """
+        Tests that components raise errors when initialized with incorrect object types,
+        ensuring tight integration.
+        """
+        # Attempt to create Mockup without a valid Wireframe
+        with self.assertRaises(TypeError):
+            Mockup("not_a_wireframe", self.design_system)
+
+        # Attempt to create Prototype without a valid Mockup
+        with self.assertRaises(TypeError):
+            Prototype("not_a_mockup")
+
+        # Attempt to add an interaction for an element that does not exist in the mockup
+        with self.assertRaises(ValueError):
+            self.app_prototype.add_interaction("LoginScreen", "non_existent_button", "ErrorScreen")
+
+if __name__ == '__main__':
+    unittest.main(argv=['first-arg-is-ignored'], exit=False)

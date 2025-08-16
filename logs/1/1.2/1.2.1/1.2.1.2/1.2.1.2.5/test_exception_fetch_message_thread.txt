@@ -1,0 +1,3 @@
+Exception during testing: No module named 'slack_sdk'
+Function: fetch_message_thread
+Task: Write unit tests for data ingestion service

@@ -1,0 +1,3 @@
+Exception during testing: No module named 'emoji'
+Function: analyze_emojis
+Task: Write unit tests for emoji analysis

@@ -1,0 +1,1 @@
+def analyze_emojis(text: str, *, return_details: bool = False) -> list[dict[str, any]]:

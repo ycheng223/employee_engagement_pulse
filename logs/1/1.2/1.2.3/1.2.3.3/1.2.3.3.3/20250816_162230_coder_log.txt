@@ -1,0 +1,215 @@
+
+=== Coder Agent Log ===
+Timestamp: 2025-08-16T16:22:30.567648
+Task: Write unit tests for burnout detection logic
+
+Output:
+import unittest
+
+# This is the function we are testing. It is included here for context and to make the test file runnable.
+def detect_burnout_warnings(weekly_data):
+    warnings = []
+    lookback_period = 4
+    
+    if len(weekly_data) < lookback_period:
+        return warnings
+
+    recent_weeks = weekly_data[-lookback_period:]
+    
+    try:
+        hours = [week['hours_worked'] for week in recent_weeks]
+        tasks = [week['tasks_completed'] for week in recent_weeks]
+        stress = [week['self_reported_stress'] for week in recent_weeks]
+    except KeyError as e:
+        return [f"Data format error: Missing key {e} in weekly record."]
+
+    avg_hours = sum(hours) / lookback_period
+    avg_stress = sum(stress) / lookback_period
+    
+    half_period = lookback_period // 2
+    
+    first_half_hours_avg = sum(hours[:half_period]) / half_period
+    second_half_hours_avg = sum(hours[half_period:]) / half_period
+    
+    first_half_stress_avg = sum(stress[:half_period]) / half_period
+    second_half_stress_avg = sum(stress[half_period:]) / half_period
+    
+    first_half_tasks_avg = sum(tasks[:half_period]) / half_period
+    second_half_tasks_avg = sum(tasks[half_period:]) / half_period
+    
+    # Rule 1: Sustained high workload
+    if avg_hours > 48:
+        warnings.append(f"Sustained high workload: Average of {avg_hours:.1f} hours/week.")
+        
+    # Rule 2: Increasing workload trend
+    if second_half_hours_avg > first_half_hours_avg and avg_hours > 42:
+        warnings.append("Increasing trend in hours worked.")
+
+    # Rule 3: Sustained high stress levels
+    if avg_stress > 7:
+        warnings.append(f"Sustained high stress: Average level is {avg_stress:.1f}/10.")
+        
+    # Rule 4: Increasing stress trend
+    if second_half_stress_avg > first_half_stress_avg and avg_stress > 5:
+        warnings.append("Increasing trend in self-reported stress.")
+        
+    # Rule 5: Decreased productivity despite high hours
+    if second_half_tasks_avg < first_half_tasks_avg and avg_hours > 40:
+        warnings.append("Productivity may be decreasing while hours remain high.")
+        
+    return warnings
+
+
+# Unit tests for the burnout detection logic
+class TestBurnoutDetection(unittest.TestCase):
+
+    def _create_week(self, hours, tasks, stress):
+        """Helper function to create a weekly data dictionary."""
+        return {'hours_worked': hours, 'tasks_completed': tasks, 'self_reported_stress': stress}
+
+    def test_no_warnings_for_healthy_data(self):
+        """Test with normal data that should not trigger any warnings."""
+        data = [
+            self._create_week(40, 10, 4),
+            self._create_week(41, 11, 5),
+            self._create_week(40, 10, 5),
+            self._create_week(39, 12, 4)
+        ]
+        self.assertEqual(detect_burnout_warnings(data), [])
+
+    def test_sustained_high_workload(self):
+        """Test Rule 1: Sustained high workload."""
+        data = [
+            self._create_week(50, 10, 5),
+            self._create_week(50, 10, 5),
+            self._create_week(48, 10, 5),
+            self._create_week(49, 10, 5) # Avg hours = 49.25
+        ]
+        warnings = detect_burnout_warnings(data)
+        self.assertIn("Sustained high workload: Average of 49.2 hours/week.", warnings)
+        self.assertEqual(len(warnings), 1)
+
+    def test_increasing_workload_trend(self):
+        """Test Rule 2: Increasing workload trend."""
+        data = [
+            self._create_week(40, 10, 5),
+            self._create_week(42, 10, 5),
+            self._create_week(45, 10, 5),
+            self._create_week(46, 10, 5) # Avg hours = 43.25
+        ]
+        warnings = detect_burnout_warnings(data)
+        self.assertIn("Increasing trend in hours worked.", warnings)
+        self.assertEqual(len(warnings), 1)
+
+    def test_sustained_high_stress(self):
+        """Test Rule 3: Sustained high stress levels."""
+        data = [
+            self._create_week(40, 10, 8),
+            self._create_week(40, 10, 7),
+            self._create_week(40, 10, 8),
+            self._create_week(40, 10, 9) # Avg stress = 8.0
+        ]
+        warnings = detect_burnout_warnings(data)
+        self.assertIn("Sustained high stress: Average level is 8.0/10.", warnings)
+        self.assertEqual(len(warnings), 1)
+
+    def test_increasing_stress_trend(self):
+        """Test Rule 4: Increasing stress trend."""
+        data = [
+            self._create_week(40, 10, 4),
+            self._create_week(40, 10, 5),
+            self._create_week(40, 10, 7),
+            self._create_week(40, 10, 8) # Avg stress = 6.0
+        ]
+        warnings = detect_burnout_warnings(data)
+        self.assertIn("Increasing trend in self-reported stress.", warnings)
+        self.assertEqual(len(warnings), 1)
+
+    def test_decreased_productivity(self):
+        """Test Rule 5: Decreased productivity despite high hours."""
+        data = [
+            self._create_week(42, 15, 5),
+            self._create_week(43, 14, 5),
+            self._create_week(41, 12, 5),
+            self._create_week(44, 10, 5) # Avg hours = 42.5
+        ]
+        warnings = detect_burnout_warnings(data)
+        self.assertIn("Productivity may be decreasing while hours remain high.", warnings)
+        self.assertEqual(len(warnings), 1)
+        
+    def test_multiple_warnings(self):
+        """Test a scenario that triggers multiple warnings."""
+        data = [
+            self._create_week(48, 12, 6), # First half
+            self._create_week(49, 11, 7),
+            self._create_week(52, 10, 8), # Second half
+            self._create_week(53, 9, 9)
+        ]
+        # Avg hours = 50.5 > 48 (Rule 1) and > 42 (Rule 2)
+        # Avg stress = 7.5 > 7 (Rule 3) and > 5 (Rule 4)
+        # Second half tasks < First half tasks and avg hours > 40 (Rule 5)
+        warnings = detect_burnout_warnings(data)
+        self.assertEqual(len(warnings), 5)
+        self.assertIn("Sustained high workload: Average of 50.5 hours/week.", warnings)
+        self.assertIn("Increasing trend in hours worked.", warnings)
+        self.assertIn("Sustained high stress: Average level is 7.5/10.", warnings)
+        self.assertIn("Increasing trend in self-reported stress.", warnings)
+        self.assertIn("Productivity may be decreasing while hours remain high.", warnings)
+
+    def test_insufficient_data(self):
+        """Test that less than 4 weeks of data returns no warnings."""
+        data = [self._create_week(40, 10, 5)] * 3
+        self.assertEqual(detect_burnout_warnings(data), [])
+
+    def test_more_than_four_weeks_data(self):
+        """Test that the function only considers the last 4 weeks of data."""
+        data = [
+            self._create_week(10, 1, 1), # Should be ignored
+            self._create_week(10, 1, 1), # Should be ignored
+            self._create_week(50, 10, 5), # Start of lookback
+            self._create_week(50, 10, 5),
+            self._create_week(48, 10, 5),
+            self._create_week(49, 10, 5)  # End of lookback
+        ]
+        warnings = detect_burnout_warnings(data)
+        self.assertIn("Sustained high workload: Average of 49.2 hours/week.", warnings)
+        self.assertEqual(len(warnings), 1)
+
+    def test_missing_key_in_data(self):
+        """Test data with a missing key, expecting a format error."""
+        data = [
+            self._create_week(40, 10, 5),
+            {'hours_worked': 40, 'tasks_completed': 10}, # Missing stress key
+            self._create_week(40, 10, 5),
+            self._create_week(40, 10, 5)
+        ]
+        expected_error = "Data format error: Missing key 'self_reported_stress' in weekly record."
+        self.assertEqual(detect_burnout_warnings(data), [expected_error])
+
+    def test_edge_case_at_thresholds(self):
+        """Test with values exactly at the thresholds, which should not trigger warnings."""
+        # Rule 1: avg hours = 48 (threshold is > 48)
+        # Rule 3: avg stress = 7 (threshold is > 7)
+        data1 = [
+            self._create_week(48, 10, 7),
+            self._create_week(48, 10, 7),
+            self._create_week(48, 10, 7),
+            self._create_week(48, 10, 7),
+        ]
+        self.assertEqual(detect_burnout_warnings(data1), [])
+
+        # Test other thresholds
+        data2 = [
+            self._create_week(41, 10, 4),
+            self._create_week(41, 10, 4),
+            self._create_week(43, 10, 6),
+            self._create_week(43, 10, 6),
+        ]
+        # Avg hours = 42.0; second half > first half, but avg not > 42
+        # Avg stress = 5.0; second half > first half, but avg not > 5
+        self.assertEqual(detect_burnout_warnings(data2), [])
+
+if __name__ == '__main__':
+    unittest.main(argv=['first-arg-is-ignored'], exit=False)
+
+==================================================

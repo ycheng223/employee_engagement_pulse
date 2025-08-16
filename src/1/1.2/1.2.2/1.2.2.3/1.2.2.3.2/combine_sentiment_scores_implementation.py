@@ -1,0 +1,43 @@
+def combine_sentiment_scores(
+    text_sentiment,
+    thread_sentiment,
+    reaction_sentiment,
+    text_weight=0.5,
+    thread_weight=0.2,
+    reaction_weight=0.3
+):
+    """
+    Combines text, thread, and reaction sentiment scores using a weighted average.
+
+    This function calculates a single, unified sentiment score by taking into account
+    the sentiment of the content itself, the conversational context (thread), and
+    explicit user feedback (reactions). Each component is assigned a weight to
+    determine its influence on the final score.
+
+    Args:
+        text_sentiment (float): The sentiment score of the primary text,
+                                typically from -1.0 (very negative) to 1.0 (very positive).
+        thread_sentiment (float): The average sentiment score of the surrounding
+                                  thread or conversation.
+        reaction_sentiment (float): A sentiment score derived from user reactions
+                                    (e.g., likes, dislikes, emojis).
+        text_weight (float, optional): The weight assigned to the text_sentiment.
+                                       Defaults to 0.5.
+        thread_weight (float, optional): The weight assigned to the thread_sentiment.
+                                         Defaults to 0.2.
+        reaction_weight (float, optional): The weight assigned to the reaction_sentiment.
+                                           Defaults to 0.3.
+
+    Returns:
+        float: The final combined sentiment score.
+    """
+    if not (text_weight + thread_weight + reaction_weight) == 1.0:
+        raise ValueError("The sum of all weights must be equal to 1.0.")
+
+    combined_score = (
+        (text_sentiment * text_weight) +
+        (thread_sentiment * thread_weight) +
+        (reaction_sentiment * reaction_weight)
+    )
+
+    return combined_score

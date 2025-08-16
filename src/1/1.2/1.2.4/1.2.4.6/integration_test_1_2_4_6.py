@@ -1,0 +1,205 @@
+import unittest
+import json
+
+# Assume the Flask app and the database modules are in the same directory
+# and can be imported.
+# main.py contains the Flask 'app' object.
+# database.py contains the data manipulation functions including 'reset_database'.
+try:
+    from main import app
+    import database
+except ImportError:
+    # Create mock objects if the actual implementations are not available
+    # This allows the test file to be syntactically correct, though it cannot run.
+    print("Warning: Could not import 'main' or 'database'. Using mock objects.")
+    print("Please ensure main.py and database.py are in the same directory.")
+    from unittest.mock import Mock
+    app = Mock()
+    app.test_client = Mock()
+    database = Mock()
+    database.reset_database = Mock()
+
+
+class TestApiIntegration(unittest.TestCase):
+
+    def setUp(self):
+        """Set up a test client and reset the database before each test."""
+        # This ensures that each test runs in a clean, isolated environment.
+        self.app = app.test_client()
+        self.app.testing = True
+        database.reset_database()
+
+    def tearDown(self):
+        """Clean up after each test."""
+        # Reset the database again to be safe.
+        database.reset_database()
+
+    def test_get_all_items_on_empty_database(self):
+        """
+        Test: GET /items
+        Scenario: The database is empty.
+        Expected: A 200 OK response with an empty JSON list.
+        """
+        # Act
+        response = self.app.get('/items')
+        data = json.loads(response.data)
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data, [])
+        self.assertEqual(len(data), 0)
+
+    def test_full_crud_lifecycle(self):
+        """
+        Test: A complete user workflow: POST -> GET (one) -> GET (all) -> PUT -> DELETE
+        Scenario: A user creates, verifies, updates, and deletes an item.
+        Expected: Each step in the process works correctly and the database state
+                  is consistent with the operations performed.
+        """
+        # 1. CREATE a new item
+        create_payload = {'name': 'Laptop', 'description': 'A powerful computer'}
+        response_post = self.app.post(
+            '/items',
+            data=json.dumps(create_payload),
+            content_type='application/json'
+        )
+        self.assertEqual(response_post.status_code, 201)
+        created_data = json.loads(response_post.data)
+        self.assertIn('id', created_data)
+        self.assertEqual(created_data['name'], create_payload['name'])
+        self.assertEqual(created_data['description'], create_payload['description'])
+        item_id = created_data['id']
+
+        # 2. READ the newly created item by its ID
+        response_get_one = self.app.get(f'/items/{item_id}')
+        self.assertEqual(response_get_one.status_code, 200)
+        get_data = json.loads(response_get_one.data)
+        self.assertEqual(get_data, created_data)
+
+        # 3. READ all items and verify the new item is in the list
+        response_get_all = self.app.get('/items')
+        self.assertEqual(response_get_all.status_code, 200)
+        all_items = json.loads(response_get_all.data)
+        self.assertEqual(len(all_items), 1)
+        self.assertEqual(all_items[0], created_data)
+
+        # 4. UPDATE the item
+        update_payload = {'name': 'Gaming Laptop', 'description': 'An even more powerful computer'}
+        response_put = self.app.put(
+            f'/items/{item_id}',
+            data=json.dumps(update_payload),
+            content_type='application/json'
+        )
+        self.assertEqual(response_put.status_code, 200)
+        updated_data = json.loads(response_put.data)
+        self.assertEqual(updated_data['id'], item_id)
+        self.assertEqual(updated_data['name'], update_payload['name'])
+        self.assertEqual(updated_data['description'], update_payload['description'])
+
+        # 5. VERIFY the update by reading the item again
+        response_get_updated = self.app.get(f'/items/{item_id}')
+        self.assertEqual(response_get_updated.status_code, 200)
+        get_updated_data = json.loads(response_get_updated.data)
+        self.assertEqual(get_updated_data, updated_data)
+
+        # 6. DELETE the item
+        response_delete = self.app.delete(f'/items/{item_id}')
+        self.assertEqual(response_delete.status_code, 204) # No Content
+        self.assertEqual(response_delete.data, b'')
+
+        # 7. VERIFY deletion by trying to get the item again
+        response_get_deleted = self.app.get(f'/items/{item_id}')
+        self.assertEqual(response_get_deleted.status_code, 404) # Not Found
+
+    def test_get_nonexistent_item(self):
+        """
+        Test: GET /items/<id>
+        Scenario: An item with the given ID does not exist.
+        Expected: A 404 Not Found response.
+        """
+        response = self.app.get('/items/999')
+        self.assertEqual(response.status_code, 404)
+        data = json.loads(response.data)
+        self.assertIn('error', data)
+        self.assertEqual(data['error'], 'Item not found')
+
+    def test_create_item_with_invalid_payload(self):
+        """
+        Test: POST /items
+        Scenario: The request payload is missing the required 'name' field.
+        Expected: A 400 Bad Request response.
+        """
+        # Payload missing 'name'
+        invalid_payload = {'description': 'This item has no name'}
+        response = self.app.post(
+            '/items',
+            data=json.dumps(invalid_payload),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertIn('error', data)
+        self.assertEqual(data['error'], 'Missing name')
+
+    def test_update_nonexistent_item(self):
+        """
+        Test: PUT /items/<id>
+        Scenario: Attempt to update an item that does not exist.
+        Expected: A 404 Not Found response.
+        """
+        payload = {'name': 'Ghost Item'}
+        response = self.app.put(
+            '/items/999',
+            data=json.dumps(payload),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 404)
+        data = json.loads(response.data)
+        self.assertIn('error', data)
+        self.assertEqual(data['error'], 'Item not found')
+
+    def test_delete_nonexistent_item(self):
+        """
+        Test: DELETE /items/<id>
+        Scenario: Attempt to delete an item that does not exist.
+        Expected: A 404 Not Found response.
+        """
+        response = self.app.delete('/items/999')
+        self.assertEqual(response.status_code, 404)
+        data = json.loads(response.data)
+        self.assertIn('error', data)
+        self.assertEqual(data['error'], 'Item not found')
+
+    def test_interaction_between_multiple_items(self):
+        """
+        Test: Multiple POST and GET requests
+        Scenario: Create multiple items and then retrieve the full list.
+        Expected: The list should contain all created items.
+        """
+        # Create item 1
+        item1_payload = {'name': 'Keyboard'}
+        self.app.post('/items', data=json.dumps(item1_payload), content_type='application/json')
+
+        # Create item 2
+        item2_payload = {'name': 'Mouse', 'description': 'An optical mouse'}
+        self.app.post('/items', data=json.dumps(item2_payload), content_type='application/json')
+
+        # Get all items
+        response = self.app.get('/items')
+        self.assertEqual(response.status_code, 200)
+        all_items = json.loads(response.data)
+
+        # Assertions
+        self.assertEqual(len(all_items), 2)
+        # Check that the names of the created items are present in the response
+        item_names = {item['name'] for item in all_items}
+        self.assertIn('Keyboard', item_names)
+        self.assertIn('Mouse', item_names)
+        
+        # Verify default description for item 1
+        keyboard_item = next(item for item in all_items if item['name'] == 'Keyboard')
+        self.assertEqual(keyboard_item['description'], "")
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

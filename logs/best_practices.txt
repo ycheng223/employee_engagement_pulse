@@ -1,0 +1,6 @@
+- As the Distributions tab first opens, you'll need to pick a distribution channel and a method within that channel to start collecting survey responses.
+  Source: https://www.qualtrics.com/support/survey-platform/distributions-module/distributions-overview/
+- Apr 1, 2025 ... Table of Contents Overview & key benefits Security permissions and scopes App manager settings User connection Site settings New...
+  Source: https://support.simpplr.com/hc/en-us/articles/18759965819155-Slack-2-0-Integration-with-Simpplr
+- Sep 22, 2024 ... Workvivo is an employee experience platform designed to enhance workplace culture and improve communication within organizations. It combines ...
+  Source: https://www.workvivo.com/blog/exp-employee-experience-platform/

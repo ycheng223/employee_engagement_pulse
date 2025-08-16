@@ -1,0 +1,57 @@
+
+=== Coder Agent Log ===
+Timestamp: 2025-08-16T16:19:09.556194
+Task: Implement daily aggregation script to calculate team-level mood
+
+Output:
+def aggregate_daily_team_mood(daily_submissions):
+    """
+    Aggregates daily mood submissions to calculate the average mood for each team.
+
+    Args:
+        daily_submissions (list of dict): A list of mood submissions, where each
+            submission is a dictionary with 'team_id', 'date', and 'mood_score'.
+            Example: [
+                {'user_id': 1, 'team_id': 'A', 'date': '2023-10-26', 'mood_score': 5},
+                {'user_id': 2, 'team_id': 'A', 'date': '2023-10-26', 'mood_score': 3}
+            ]
+
+    Returns:
+        dict: A nested dictionary where keys are dates, and values are
+              dictionaries of team IDs to their average mood score for that day.
+              Example: { '2023-10-26': { 'A': 4.0 } }
+    """
+    # Intermediate storage for sums and counts per team per day
+    # Key: (team_id, date), Value: {'total_score': X, 'count': Y}
+    aggregates = {}
+
+    for submission in daily_submissions:
+        # Create a unique key for each team on a specific day
+        key = (submission['team_id'], submission['date'])
+        
+        # Initialize the entry if it's the first time seeing this team/day combo
+        if key not in aggregates:
+            aggregates[key] = {'total_score': 0, 'count': 0}
+            
+        # Add the current submission's score and increment the count
+        aggregates[key]['total_score'] += submission['mood_score']
+        aggregates[key]['count'] += 1
+
+    # Final structure to hold the calculated averages
+    # Format: { 'date': { 'team_id': average_mood } }
+    team_moods = {}
+
+    for key, data in aggregates.items():
+        team_id, date = key
+        
+        # Ensure the date key exists in the final dictionary
+        if date not in team_moods:
+            team_moods[date] = {}
+        
+        # Calculate the average mood and assign it
+        average_mood = data['total_score'] / data['count']
+        team_moods[date][team_id] = average_mood
+        
+    return team_moods
+
+==================================================

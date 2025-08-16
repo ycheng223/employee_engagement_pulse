@@ -1,0 +1,241 @@
+import unittest
+import sqlite3
+import os
+
+# --- Implementation to be tested ---
+# This is the code provided in the subtask context.
+
+# Define migrations chronologically. These scripts create a source table
+# ('sales') and a corresponding aggregate table ('daily_sales_summary'),
+# and include logic for the initial data population.
+MIGRATIONS = {
+    "0001_create_source_sales_table": """
+    CREATE TABLE sales (
+        id INTEGER PRIMARY KEY,
+        product_id INTEGER NOT NULL,
+        sale_date TEXT NOT NULL,
+        amount REAL NOT NULL
+    );
+    """,
+    "0002_create_aggregate_sales_summary": """
+    CREATE TABLE daily_sales_summary (
+        summary_date TEXT PRIMARY KEY,
+        total_sales REAL NOT NULL,
+        transaction_count INTEGER NOT NULL
+    );
+    """,
+    # This migration populates the aggregate table. In a real system,
+    # this logic might be run periodically by a separate process (e.g., a nightly job)
+    # to keep the aggregate table up-to-date.
+    "0003_populate_daily_sales_summary": """
+    INSERT INTO daily_sales_summary (summary_date, total_sales, transaction_count)
+    SELECT
+        sale_date,
+        SUM(amount),
+        COUNT(id)
+    FROM
+        sales
+    GROUP BY
+        sale_date;
+    """
+}
+
+def run_aggregate_migrations(db_path="aggregates.db"):
+    """
+    Applies a set of ordered SQL migrations to a database.
+
+    This function simulates a simple database migration system, ideal for
+    creating and maintaining the schema of aggregate tables. It works by:
+    1.  Connecting to a SQLite database.
+    2.  Creating a `migration_log` table if it doesn't exist to track
+        which migrations have already been applied.
+    3.  Reading a predefined dictionary of named SQL scripts (`MIGRATIONS`).
+    4.  Executing each script in order, skipping any that are already logged
+        as applied.
+    5.  Logging each newly applied script to the `migration_log` table.
+
+    This ensures that database schema changes, especially for summary or
+    aggregate tables, are applied consistently and exactly once.
+
+    Args:
+        db_path (str): The file path for the SQLite database.
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # Step 1: Ensure the migration tracking table exists.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS migration_log (
+                migration_name TEXT PRIMARY KEY,
+                applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.commit()
+
+        # Step 2: Get the set of already applied migrations.
+        cursor.execute("SELECT migration_name FROM migration_log;")
+        applied_migrations = {row[0] for row in cursor.fetchall()}
+
+        # Step 3: Iterate through defined migrations and apply new ones.
+        # Sorting ensures migrations are applied in chronological order.
+        for name in sorted(MIGRATIONS.keys()):
+            if name not in applied_migrations:
+                try:
+                    # Execute the migration script.
+                    sql_script = MIGRATIONS[name]
+                    cursor.executescript(sql_script)
+
+                    # Record the successful migration.
+                    cursor.execute(
+                        "INSERT INTO migration_log (migration_name) VALUES (?);", (name,)
+                    )
+
+                    # Commit the transaction for this migration.
+                    conn.commit()
+                except sqlite3.Error as e:
+                    # If a migration fails, roll back its changes and stop.
+                    conn.rollback()
+                    raise e
+
+    except sqlite3.Error as e:
+        # print(f"A database error occurred: {e}") # Silenced for testing
+        raise e
+    finally:
+        if conn:
+            conn.close()
+
+# --- Integration Test ---
+
+class TestDatabaseAggregationIntegration(unittest.TestCase):
+
+    def setUp(self):
+        """Set up a temporary database for each test."""
+        self.db_path = "test_aggregates.db"
+        # Ensure the database file does not exist before a test runs
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def tearDown(self):
+        """Clean up the temporary database after each test."""
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def get_table_names(self, cursor):
+        """Helper function to get all table names from the database."""
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        return {row[0] for row in cursor.fetchall()}
+
+    def test_initial_run_and_idempotency(self):
+        """
+        Tests the initial migration run on an empty database and ensures that
+        running the migrations again does not change the database state or cause errors.
+        """
+        # 1. First run on an empty database
+        run_aggregate_migrations(self.db_path)
+
+        # 2. Verify the initial state
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Check that all expected tables are created
+        table_names = self.get_table_names(cursor)
+        self.assertIn("sales", table_names)
+        self.assertIn("daily_sales_summary", table_names)
+        self.assertIn("migration_log", table_names)
+
+        # Check that all migrations are logged
+        cursor.execute("SELECT migration_name FROM migration_log;")
+        applied_migrations = {row[0] for row in cursor.fetchall()}
+        self.assertEqual(applied_migrations, set(MIGRATIONS.keys()))
+
+        # Check that the summary table is empty, as the source table was empty
+        cursor.execute("SELECT COUNT(*) FROM daily_sales_summary;")
+        self.assertEqual(cursor.fetchone()[0], 0)
+
+        conn.close()
+
+        # 3. Second run to test idempotency
+        # This should execute without raising any exceptions
+        try:
+            run_aggregate_migrations(self.db_path)
+        except Exception as e:
+            self.fail(f"Running migrations a second time failed with: {e}")
+
+        # 4. Verify the state has not changed
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # The number of logged migrations should be the same
+        cursor.execute("SELECT COUNT(*) FROM migration_log;")
+        self.assertEqual(cursor.fetchone()[0], len(MIGRATIONS))
+
+        conn.close()
+
+    def test_aggregation_logic_with_source_data(self):
+        """
+        Tests the core aggregation logic by pre-loading data into the source table
+        and verifying the contents of the aggregate table after migration.
+        """
+        # 1. Run migrations once to set up the entire schema.
+        run_aggregate_migrations(self.db_path)
+
+        # 2. Connect to the DB and prepare for the main test.
+        # We need to add data to 'sales' and then re-run the aggregation step.
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Clear the migration log for the aggregation step so it runs again
+        cursor.execute("DELETE FROM migration_log WHERE migration_name = ?;", ("0003_populate_daily_sales_summary",))
+        conn.commit()
+
+        # 3. Insert sample data into the source 'sales' table.
+        sales_data = [
+            (1, 101, '2023-11-01', 10.0),
+            (2, 102, '2023-11-01', 15.5), # Day 1: 2 transactions, total 25.5
+            (3, 101, '2023-11-02', 20.0),
+            (4, 103, '2023-11-02', 5.0),
+            (5, 102, '2023-11-02', 2.25), # Day 2: 3 transactions, total 27.25
+            (6, 104, '2023-11-03', 100.0) # Day 3: 1 transaction, total 100.0
+        ]
+        cursor.executemany("INSERT INTO sales (id, product_id, sale_date, amount) VALUES (?, ?, ?, ?)", sales_data)
+        conn.commit()
+        conn.close()
+
+        # 4. Run the migrations again. It should skip the first two and only apply the third.
+        # This tests the integration of the aggregation logic on existing data.
+        run_aggregate_migrations(self.db_path)
+
+        # 5. Connect and verify the aggregated results in 'daily_sales_summary'.
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT summary_date, total_sales, transaction_count FROM daily_sales_summary ORDER BY summary_date;")
+        results = cursor.fetchall()
+
+        # Create a dictionary for easier assertion
+        summary_data = {row[0]: {"total": row[1], "count": row[2]} for row in results}
+
+        # 6. Assert the results
+        self.assertEqual(len(summary_data), 3)
+
+        # Check data for 2023-11-01
+        self.assertIn('2023-11-01', summary_data)
+        self.assertAlmostEqual(summary_data['2023-11-01']['total'], 25.5)
+        self.assertEqual(summary_data['2023-11-01']['count'], 2)
+
+        # Check data for 2023-11-02
+        self.assertIn('2023-11-02', summary_data)
+        self.assertAlmostEqual(summary_data['2023-11-02']['total'], 27.25)
+        self.assertEqual(summary_data['2023-11-02']['count'], 3)
+
+        # Check data for 2023-11-03
+        self.assertIn('2023-11-03', summary_data)
+        self.assertAlmostEqual(summary_data['2023-11-03']['total'], 100.0)
+        self.assertEqual(summary_data['2023-11-03']['count'], 1)
+
+        conn.close()
+
+
+if __name__ == '__main__':
+    unittest.main(argv=['first-arg-is-ignored'], exit=False)

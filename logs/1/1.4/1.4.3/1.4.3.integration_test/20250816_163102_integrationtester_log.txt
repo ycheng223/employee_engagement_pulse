@@ -1,0 +1,239 @@
+
+=== IntegrationTester Agent Log ===
+Timestamp: 2025-08-16T16:31:02.986227
+Task: Integration test for: Monitoring & Logging
+
+Output:
+import unittest
+import logging
+import json
+import sys
+import io
+from datetime import datetime, timezone
+from contextlib import redirect_stdout
+
+# Assuming the provided code is in a file named 'structured_logger.py'
+# In a real project structure, you would use a proper import like:
+# from my_app.monitoring import JsonFormatter, configure_structured_logging
+# For this self-contained test, the implementation is copied here.
+
+class JsonFormatter(logging.Formatter):
+    """
+    Custom formatter to output log records as a JSON string.
+    """
+    def format(self, record):
+        log_record = {
+            'timestamp': datetime.utcfromtimestamp(record.created).isoformat() + 'Z',
+            'level': record.levelname,
+            'message': record.getMessage(),
+            'name': record.name,
+        }
+
+        # Add extra data passed to the logger
+        if hasattr(record, 'extra_data'):
+            log_record.update(record.extra_data)
+
+        # Add exception info if present
+        if record.exc_info:
+            log_record['exception'] = self.formatException(record.exc_info)
+
+        return json.dumps(log_record)
+
+def configure_structured_logging():
+    """
+    Configures a logger to output structured JSON logs to stdout.
+
+    This setup is idempotent, meaning it can be called multiple times
+    without adding duplicate handlers.
+
+    Returns:
+        logging.Logger: The configured root logger instance.
+    """
+    # Get the root logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    # Check if a handler with our custom formatter is already configured
+    # to avoid adding duplicate handlers.
+    if any(isinstance(h.formatter, JsonFormatter) for h in logger.handlers):
+        return logger
+
+    # If other handlers exist (like the default basicConfig), remove them
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+
+    # Configure a new handler with the JSON formatter
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = JsonFormatter()
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    return logger
+
+class TestStructuredLoggingIntegration(unittest.TestCase):
+
+    def setUp(self):
+        """
+        Redirect stdout to capture log output and reset the root logger.
+        """
+        self.log_capture = io.StringIO()
+        self.stdout_redirect = redirect_stdout(self.log_capture)
+        self.stdout_redirect.__enter__()
+
+        # Ensure the root logger is clean before each test
+        self.root_logger = logging.getLogger()
+        self.original_level = self.root_logger.level
+        self.original_handlers = self.root_logger.handlers[:]
+        for handler in self.original_handlers:
+            self.root_logger.removeHandler(handler)
+
+    def tearDown(self):
+        """
+        Restore stdout and the original logger configuration.
+        """
+        self.stdout_redirect.__exit__(None, None, None)
+        
+        # Restore the logger to its original state
+        for handler in self.root_logger.handlers[:]:
+            self.root_logger.removeHandler(handler)
+        for handler in self.original_handlers:
+            self.root_logger.addHandler(handler)
+        self.root_logger.setLevel(self.original_level)
+
+
+    def _get_json_log(self):
+        """Helper to get and parse the captured log output."""
+        log_output = self.log_capture.getvalue().strip()
+        self.assertTrue(log_output, "Log output was empty")
+        return json.loads(log_output)
+
+    def test_basic_log_format_and_content(self):
+        """
+        Tests if a simple log message is formatted correctly into JSON.
+        """
+        logger = configure_structured_logging()
+        msg = "This is a test log message"
+        logger.info(msg)
+
+        log_data = self._get_json_log()
+
+        self.assertIn('timestamp', log_data)
+        self.assertIn('level', log_data)
+        self.assertIn('message', log_data)
+        self.assertIn('name', log_data)
+
+        self.assertEqual(log_data['level'], 'INFO')
+        self.assertEqual(log_data['message'], msg)
+        self.assertEqual(log_data['name'], 'root')
+        
+        # Validate timestamp format
+        try:
+            # Python's fromisoformat doesn't like the 'Z' suffix before 3.11
+            dt_obj = datetime.fromisoformat(log_data['timestamp'].replace('Z', '+00:00'))
+            self.assertEqual(dt_obj.tzinfo, timezone.utc)
+        except ValueError:
+            self.fail("Timestamp is not in a valid ISO 8601 format")
+
+    def test_log_with_extra_data(self):
+        """
+        Tests if extra data provided to the logger is included in the JSON output.
+        The implementation specifically looks for an 'extra_data' dictionary.
+        """
+        logger = configure_structured_logging()
+        extra_info = {'user_id': 123, 'request_id': 'abc-xyz-789'}
+        
+        # The formatter looks for `record.extra_data`, so we must pass it this way.
+        logger.warning("User action recorded", extra={'extra_data': extra_info})
+        
+        log_data = self._get_json_log()
+
+        self.assertEqual(log_data['level'], 'WARNING')
+        self.assertEqual(log_data['message'], "User action recorded")
+        self.assertEqual(log_data['user_id'], 123)
+        self.assertEqual(log_data['request_id'], 'abc-xyz-789')
+
+    def test_exception_logging(self):
+        """
+        Tests if exception information is correctly captured and logged.
+        """
+        logger = configure_structured_logging()
+        
+        try:
+            result = 1 / 0
+        except ZeroDivisionError:
+            logger.error("An exception occurred", exc_info=True)
+
+        log_data = self._get_json_log()
+
+        self.assertEqual(log_data['level'], 'ERROR')
+        self.assertIn('exception', log_data)
+        self.assertIsInstance(log_data['exception'], str)
+        self.assertIn("Traceback (most recent call last):", log_data['exception'])
+        self.assertIn("ZeroDivisionError: division by zero", log_data['exception'])
+
+    def test_log_level_filtering(self):
+        """
+        Tests if logs below the configured level (INFO) are ignored.
+        """
+        logger = configure_structured_logging() # Sets level to INFO
+        
+        logger.debug("This debug message should not appear.")
+        
+        # Check that nothing has been logged yet
+        self.assertEqual(self.log_capture.getvalue(), "")
+        
+        logger.warning("This warning message should appear.")
+        
+        log_data = self._get_json_log()
+        self.assertEqual(log_data['level'], 'WARNING')
+        self.assertEqual(log_data['message'], "This warning message should appear.")
+
+    def test_configuration_is_idempotent(self):
+        """
+        Tests if calling configure_structured_logging multiple times does not add duplicate handlers.
+        """
+        # Initial configuration
+        logger1 = configure_structured_logging()
+        self.assertEqual(len(logger1.handlers), 1)
+        self.assertIsInstance(logger1.handlers[0].formatter, JsonFormatter)
+
+        # Second configuration call
+        logger2 = configure_structured_logging()
+        self.assertEqual(len(logger2.handlers), 1)
+        self.assertIs(logger1, logger2) # Should be the same root logger instance
+
+        # Log a message and ensure it only appears once
+        logger2.info("Testing idempotency")
+        
+        log_output = self.log_capture.getvalue().strip()
+        # There should be only one JSON object, not two from duplicate handlers
+        self.assertEqual(log_output.count('\n'), 0)
+        self.assertIn("Testing idempotency", log_output)
+
+    def test_removes_preexisting_handlers(self):
+        """
+        Tests that configure_structured_logging removes any handlers that were
+        previously configured on the root logger.
+        """
+        # Manually add a basic, non-JSON handler
+        preexisting_handler = logging.StreamHandler(sys.stdout)
+        preexisting_handler.setFormatter(logging.Formatter('%(levelname)s:%(message)s'))
+        self.root_logger.addHandler(preexisting_handler)
+        self.assertEqual(len(self.root_logger.handlers), 1)
+
+        # Now, run our configuration function
+        logger = configure_structured_logging()
+
+        # The old handler should be gone, replaced by our JsonFormatter handler
+        self.assertEqual(len(logger.handlers), 1)
+        self.assertIsInstance(logger.handlers[0].formatter, JsonFormatter)
+        
+        # Verify the output is JSON, not the basic format
+        logger.info("Final check")
+        log_data = self._get_json_log()
+        self.assertEqual(log_data['message'], "Final check")
+
+if __name__ == '__main__':
+    unittest.main(argv=['first-arg-is-ignored'], exit=False)
+
+==================================================

@@ -1,0 +1,53 @@
+
+=== Coder Agent Log ===
+Timestamp: 2025-08-16T16:15:08.171501
+Task: Implement emoji sentiment analysis function
+
+Output:
+import emoji
+
+def analyze_emojis(text: str, *, return_details: bool = False) -> list[dict[str, any]]:
+    """
+    Analyzes the sentiment of emojis found in a given text string.
+
+    This function identifies all emojis in the input text and determines their
+    sentiment (positive, negative, or neutral) based on a predefined mapping
+    from the 'emoji' library.
+
+    Args:
+        text: The input string to analyze.
+        return_details: If True, returns a more detailed dictionary for each
+                        emoji, including its name and position in the text.
+                        Defaults to False.
+
+    Returns:
+        A list of dictionaries, where each dictionary represents an emoji
+        found in the text and contains its sentiment information.
+    """
+    results = []
+    found_emojis = emoji.emoji_list(text)
+
+    for item in found_emojis:
+        emoji_char = item['emoji']
+        # Look up the emoji in the library's data, default to neutral if not found
+        emoji_details = emoji.EMOJI_DATA.get(emoji_char, {})
+        sentiment = emoji_details.get('sentiment', 'neutral')
+
+        if return_details:
+            analysis_result = {
+                'emoji': emoji_char,
+                'sentiment': sentiment,
+                'name': emoji_details.get('en', 'unknown'),
+                'match_start': item['match_start'],
+                'match_end': item['match_end'],
+            }
+        else:
+            analysis_result = {
+                'emoji': emoji_char,
+                'sentiment': sentiment,
+            }
+        results.append(analysis_result)
+
+    return results
+
+==================================================

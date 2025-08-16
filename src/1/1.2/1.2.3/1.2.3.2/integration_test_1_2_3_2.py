@@ -1,0 +1,241 @@
+import unittest
+from datetime import datetime
+
+# --- Implementations to be tested ---
+# These functions are copied from the provided context to create a self-contained test file.
+
+def aggregate_daily_team_mood(daily_submissions):
+    """
+    Aggregates daily mood submissions to calculate the average mood for each team.
+
+    Args:
+        daily_submissions (list of dict): A list of mood submissions, where each
+            submission is a dictionary with 'team_id', 'date', and 'mood_score'.
+
+    Returns:
+        dict: A nested dictionary where keys are dates, and values are
+              dictionaries of team IDs to their average mood score for that day.
+    """
+    aggregates = {}
+
+    for submission in daily_submissions:
+        key = (submission['team_id'], submission['date'])
+        
+        if key not in aggregates:
+            aggregates[key] = {'total_score': 0, 'count': 0}
+            
+        aggregates[key]['total_score'] += submission['mood_score']
+        aggregates[key]['count'] += 1
+
+    team_moods = {}
+
+    for key, data in aggregates.items():
+        team_id, date = key
+        
+        if date not in team_moods:
+            team_moods[date] = {}
+        
+        average_mood = data['total_score'] / data['count']
+        team_moods[date][team_id] = average_mood
+        
+    return team_moods
+
+
+def calculate_weekly_trends(daily_team_moods):
+    """
+    Calculates the week-over-week trend in average mood for each team.
+
+    The trend is defined as the difference between the current week's average mood
+    and the previous week's average mood. It requires at least two weeks of data
+    for a trend to be calculated.
+
+    Args:
+        daily_team_moods (dict): A dictionary where keys are dates ('YYYY-MM-DD')
+            and values are dictionaries of team IDs to their average mood score.
+
+    Returns:
+        dict: A nested dictionary where keys are team IDs, and values are
+              dictionaries of week identifiers ('YYYY-WW') to their mood trend.
+    """
+    weekly_aggregates = {}
+    for date_str, teams_data in daily_team_moods.items():
+        try:
+            dt_obj = datetime.strptime(date_str, '%Y-%m-%d')
+            year, week, _ = dt_obj.isocalendar()
+            week_id = f"{year}-{week:02d}"
+        except (ValueError, TypeError):
+            continue
+
+        for team_id, daily_avg in teams_data.items():
+            weekly_aggregates.setdefault(team_id, {}).setdefault(week_id, {'total': 0, 'count': 0})
+            
+            weekly_aggregates[team_id][week_id]['total'] += daily_avg
+            weekly_aggregates[team_id][week_id]['count'] += 1
+
+    weekly_averages = {}
+    for team_id, weeks_data in weekly_aggregates.items():
+        weekly_averages[team_id] = {}
+        for week_id, data in weeks_data.items():
+            if data['count'] > 0:
+                average = data['total'] / data['count']
+                weekly_averages[team_id][week_id] = average
+
+    trends = {}
+    for team_id, averages in weekly_averages.items():
+        trends[team_id] = {}
+        sorted_weeks = sorted(averages.keys())
+        
+        if len(sorted_weeks) < 2:
+            continue
+
+        for i in range(1, len(sorted_weeks)):
+            previous_week_id = sorted_weeks[i-1]
+            current_week_id = sorted_weeks[i]
+            
+            previous_avg = averages[previous_week_id]
+            current_avg = averages[current_week_id]
+            
+            trend_value = current_avg - previous_avg
+            trends[team_id][current_week_id] = trend_value
+            
+    return trends
+
+
+# --- Integration Test ---
+
+class TestScheduledAggregationJob(unittest.TestCase):
+    """
+    Integration test for the full Scheduled Aggregation Job pipeline.
+    Tests the interaction between `aggregate_daily_team_mood` and `calculate_weekly_trends`.
+    """
+
+    def test_full_pipeline_with_multiple_teams_and_weeks(self):
+        """
+        Tests the end-to-end flow from raw submissions to weekly trends for a realistic scenario.
+        - Team 'Alpha' shows a negative trend.
+        - Team 'Beta' shows a positive trend.
+        - Team 'Gamma' has data for only one week and should not appear in the final output.
+        - Includes multiple submissions per day and multiple days per week to test averaging.
+        """
+        # --- 1. Input: Raw daily submissions ---
+        raw_submissions = [
+            # Team Alpha: Week 43 (Oct 23-29, 2023)
+            {'user_id': 1, 'team_id': 'Alpha', 'date': '2023-10-23', 'mood_score': 5},
+            {'user_id': 2, 'team_id': 'Alpha', 'date': '2023-10-23', 'mood_score': 3}, # Daily avg: 4.0
+            {'user_id': 1, 'team_id': 'Alpha', 'date': '2023-10-25', 'mood_score': 2}, # Daily avg: 2.0
+            # Weekly avg for Alpha in W43: (4.0 + 2.0) / 2 = 3.0
+
+            # Team Alpha: Week 44 (Oct 30 - Nov 5, 2023)
+            {'user_id': 1, 'team_id': 'Alpha', 'date': '2023-10-31', 'mood_score': 1}, # Daily avg: 1.0
+            # Weekly avg for Alpha in W44: 1.0
+            # Trend for Alpha in W44: 1.0 - 3.0 = -2.0
+
+            # Team Beta: Week 43
+            {'user_id': 3, 'team_id': 'Beta', 'date': '2023-10-24', 'mood_score': 2},
+            {'user_id': 4, 'team_id': 'Beta', 'date': '2023-10-24', 'mood_score': 2}, # Daily avg: 2.0
+            # Weekly avg for Beta in W43: 2.0
+
+            # Team Beta: Week 44
+            {'user_id': 3, 'team_id': 'Beta', 'date': '2023-10-30', 'mood_score': 5},
+            {'user_id': 4, 'team_id': 'Beta', 'date': '2023-11-01', 'mood_score': 3}, # Daily avg: 5.0 and 3.0
+            # Weekly avg for Beta in W44: (5.0 + 3.0) / 2 = 4.0
+            # Trend for Beta in W44: 4.0 - 2.0 = 2.0
+
+            # Team Gamma: Only one week of data
+            {'user_id': 5, 'team_id': 'Gamma', 'date': '2023-11-02', 'mood_score': 4}, # Week 44
+        ]
+
+        # --- 2. Execution: Run the two-step process ---
+        daily_aggregates = aggregate_daily_team_mood(raw_submissions)
+        weekly_trends = calculate_weekly_trends(daily_aggregates)
+
+        # --- 3. Verification: Check the final output ---
+        expected_trends = {
+            'Alpha': {'2023-44': -2.0},
+            'Beta': {'2023-44': 2.0}
+            # 'Gamma' should be absent as it only has one week of data
+        }
+
+        self.assertIn('Alpha', weekly_trends)
+        self.assertIn('Beta', weekly_trends)
+        self.assertNotIn('Gamma', weekly_trends, "Team with insufficient data should not have a trend.")
+        
+        self.assertIn('2023-44', weekly_trends['Alpha'])
+        self.assertAlmostEqual(weekly_trends['Alpha']['2023-44'], expected_trends['Alpha']['2023-44'])
+        
+        self.assertIn('2023-44', weekly_trends['Beta'])
+        self.assertAlmostEqual(weekly_trends['Beta']['2023-44'], expected_trends['Beta']['2023-44'])
+
+    def test_pipeline_with_year_boundary(self):
+        """
+        Tests the pipeline with data spanning from the end of one year to the start of the next.
+        """
+        raw_submissions = [
+            # Team 'Ops': Week 52 of 2023 (Dec 25-31)
+            {'user_id': 1, 'team_id': 'Ops', 'date': '2023-12-25', 'mood_score': 5},
+            {'user_id': 2, 'team_id': 'Ops', 'date': '2023-12-27', 'mood_score': 3}, # Avg for W52: (5+3)/2 = 4.0
+            
+            # Team 'Ops': Week 1 of 2024 (Jan 1-7)
+            {'user_id': 1, 'team_id': 'Ops', 'date': '2024-01-01', 'mood_score': 2},
+            {'user_id': 2, 'team_id': 'Ops', 'date': '2024-01-03', 'mood_score': 2}, # Avg for W01: (2+2)/2 = 2.0
+            # Expected trend for W01: 2.0 - 4.0 = -2.0
+        ]
+
+        daily_aggregates = aggregate_daily_team_mood(raw_submissions)
+        weekly_trends = calculate_weekly_trends(daily_aggregates)
+
+        expected_trends = {'Ops': {'2024-01': -2.0}}
+        
+        self.assertEqual(len(weekly_trends), 1)
+        self.assertIn('Ops', weekly_trends)
+        self.assertIn('2024-01', weekly_trends['Ops'])
+        self.assertAlmostEqual(weekly_trends['Ops']['2024-01'], expected_trends['Ops']['2024-01'])
+
+    def test_pipeline_with_no_submissions(self):
+        """
+        Tests that an empty list of submissions results in an empty trend report.
+        """
+        raw_submissions = []
+        
+        daily_aggregates = aggregate_daily_team_mood(raw_submissions)
+        weekly_trends = calculate_weekly_trends(daily_aggregates)
+
+        self.assertEqual(weekly_trends, {})
+
+    def test_pipeline_with_insufficient_data_for_any_team(self):
+        """
+        Tests a scenario where multiple teams exist, but none have data for more than one week.
+        """
+        raw_submissions = [
+            # Team 'A' only in Week 43
+            {'user_id': 1, 'team_id': 'A', 'date': '2023-10-23', 'mood_score': 5},
+            # Team 'B' only in Week 44
+            {'user_id': 2, 'team_id': 'B', 'date': '2023-10-30', 'mood_score': 4},
+        ]
+
+        daily_aggregates = aggregate_daily_team_mood(raw_submissions)
+        weekly_trends = calculate_weekly_trends(daily_aggregates)
+        
+        self.assertEqual(weekly_trends, {}, "Should be empty as no team has two weeks of data.")
+
+    def test_pipeline_with_non_consecutive_weeks(self):
+        """
+        Tests that a trend is calculated correctly even if there is a gap week with no data.
+        """
+        raw_submissions = [
+            # Team 'Infra': Week 42
+            {'user_id': 10, 'team_id': 'Infra', 'date': '2023-10-16', 'mood_score': 2.0},
+            # Week 43 is skipped
+            # Team 'Infra': Week 44
+            {'user_id': 10, 'team_id': 'Infra', 'date': '2023-10-30', 'mood_score': 5.0}, # W44 avg: 5.0
+            # Trend for W44 should compare against W42: 5.0 - 2.0 = 3.0
+        ]
+        
+        daily_aggregates = aggregate_daily_team_mood(raw_submissions)
+        weekly_trends = calculate_weekly_trends(daily_aggregates)
+
+        expected_trends = {'Infra': {'2023-44': 3.0}}
+
+        self.assertIn('Infra', weekly_trends)
+        self.assertIn('2023-44', weekly_trends['Infra'])
+        self.assertAlmostEqual(weekly_trends['Infra']['2023-44'], expected_trends['Infra']['2023-44'])

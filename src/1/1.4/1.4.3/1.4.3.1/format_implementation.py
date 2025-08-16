@@ -1,0 +1,57 @@
+import logging
+import json
+import sys
+from datetime import datetime
+
+class JsonFormatter(logging.Formatter):
+    """
+    Custom formatter to output log records as a JSON string.
+    """
+    def format(self, record):
+        log_record = {
+            'timestamp': datetime.utcfromtimestamp(record.created).isoformat() + 'Z',
+            'level': record.levelname,
+            'message': record.getMessage(),
+            'name': record.name,
+        }
+
+        # Add extra data passed to the logger
+        if hasattr(record, 'extra_data'):
+            log_record.update(record.extra_data)
+
+        # Add exception info if present
+        if record.exc_info:
+            log_record['exception'] = self.formatException(record.exc_info)
+
+        return json.dumps(log_record)
+
+def configure_structured_logging():
+    """
+    Configures a logger to output structured JSON logs to stdout.
+
+    This setup is idempotent, meaning it can be called multiple times
+    without adding duplicate handlers.
+
+    Returns:
+        logging.Logger: The configured root logger instance.
+    """
+    # Get the root logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    # Check if a handler with our custom formatter is already configured
+    # to avoid adding duplicate handlers.
+    if any(isinstance(h.formatter, JsonFormatter) for h in logger.handlers):
+        return logger
+
+    # If other handlers exist (like the default basicConfig), remove them
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+
+    # Configure a new handler with the JSON formatter
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = JsonFormatter()
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    return logger

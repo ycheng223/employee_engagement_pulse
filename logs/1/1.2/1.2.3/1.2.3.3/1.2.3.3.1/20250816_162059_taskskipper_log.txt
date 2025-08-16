@@ -1,0 +1,9 @@
+
+=== TaskSkipper Agent Log ===
+Timestamp: 2025-08-16T16:20:59.453230
+Task: Define criteria for a burnout warning (e.g., sustained sentiment drop, decreased activity)
+
+Output:
+Skipped - non-code task
+
+==================================================

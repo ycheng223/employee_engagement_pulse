@@ -1,0 +1,73 @@
+
+=== Coder Agent Log ===
+Timestamp: 2025-08-16T16:09:30.313419
+Task: Implement Slack Events API listener for real-time messages
+
+Output:
+import os
+import logging
+from slack_bolt import App
+
+logging.basicConfig(level=logging.INFO)
+
+def run_slack_events_listener():
+    """
+    Initializes and starts a Slack Events API listener for real-time messages.
+
+    This function sets up a Slack App using the slack_bolt library,
+    defines a handler for 'message' events, and starts a web server
+    to listen for incoming events from Slack.
+
+    It requires the following environment variables to be set:
+    - SLACK_BOT_TOKEN: Your bot's xoxb- token from the Slack API dashboard.
+    - SLACK_SIGNING_SECRET: Your app's signing secret from the Slack API dashboard.
+
+    When a user posts a message in a channel the bot is a member of,
+    this listener will log the message content to the console.
+    """
+    try:
+        bot_token = os.environ["SLACK_BOT_TOKEN"]
+        signing_secret = os.environ["SLACK_SIGNING_SECRET"]
+    except KeyError as e:
+        logging.error(f"Error: Environment variable {e} not set. Please set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET.")
+        return
+
+    app = App(
+        token=bot_token,
+        signing_secret=signing_secret
+    )
+
+    @app.event("message")
+    def handle_message_events(body, logger):
+        """
+        Handles 'message' events by logging the message text and user.
+        Ignores messages sent by bots or with a subtype (e.g., channel joins).
+        """
+        event = body.get("event", {})
+
+        if event.get("subtype") is not None or event.get("bot_id") is not None:
+            return
+
+        try:
+            user_id = event.get("user")
+            message_text = event.get("text")
+            channel_id = event.get("channel")
+
+            if user_id and message_text:
+                logger.info(f"Received message from user {user_id} in channel {channel_id}: '{message_text}'")
+
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+
+    try:
+        port = int(os.environ.get("PORT", 3000))
+        logging.info(f"Starting Slack Bolt app on port {port}")
+        app.start(port=port)
+    except Exception as e:
+        logging.error(f"Failed to start the Slack app: {e}")
+
+
+if __name__ == "__main__":
+    run_slack_events_listener()
+
+==================================================

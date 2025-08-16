@@ -1,0 +1,1 @@
+def analyze_text(text: str, *, analyses: list[str] | None = None, **options: any) -> dict[str, any]:
